@@ -81,7 +81,7 @@ from __future__ import division, print_function, absolute_import
 # if myodeint.runner:
 #     IntegratorBase.integrator_classes.append(myodeint)
 
-__all__ = ['ode', 'complex_ode']
+__all__ = ['ode', 'complex_ode', 'dense_dop']
 __version__ = "$Id$"
 __docformat__ = "restructuredtext en"
 
@@ -269,8 +269,18 @@ class ode(object):
 
         This code is described in [HNW93]_.
 
-        This integrator accepts the following parameters in set_integrator()
-        method of the ode class:
+        The solution at each internal integrator step can be obtained by
+        registering a callback function using the set_solout() method.
+        This callback function may optionally be passed the coefficients 
+        of an interpolating polynomial (obtained from the integrator) 
+        to evaluate the solution at arbitrary times between internal
+        integrator steps (so-called dense output; see [HNW93]_).  
+        This option to obtain these coefficients can be specified when 
+        registering the callback function by specifying the components 
+        of the system for which dense output is desired.
+
+        This integrator accepts the following parameters in the 
+        set_integrator() method of the ode class:
 
         - atol : float or sequence
           absolute tolerance for solution
@@ -416,26 +426,52 @@ class ode(object):
         self.jac_params = args
         return self
 
-    def set_solout(self, solout):
+    def set_solout(self, solout, dense_components=None):
         """
         Set callable to be called at every successful integration step.
+
+        Only available for the dopri5 and dop853 integrators.
 
         Parameters
         ----------
         solout : callable
-            ``solout(t, y)`` is called at each internal integrator step,
-            t is a scalar providing the current independent position
-            y is the current soloution ``y.shape == (n,)``
-            solout should return -1 to stop integration
-            otherwise it should return None or 0
-
+            The function `solout` is called at each internal integrator
+            step.  `solout` should return -1 to stop integration;
+            otherwise it should return None or 0.
+            The arguments that `solout` is provided with depend on the
+            keyword argument `dense_components`.  If `dense_components`
+            is None (the default) then ``solout(t, y)`` is called where
+            `t` is a scalar providing the current time and
+            `y` is the current solution i.e. ``y.shape == (n,)``.
+            If instead of None, the keyword argument `dense_components`
+            is a sequence then  
+            ``solout(nr , told, t , y, con_view, icomp)`` is called.  
+            The additional parameters passed to `solout` may be used for 
+            interpolation between the current (at `t`) and the last 
+            integration step (at `told`).  The helper function `dense_dop` 
+            in this module can make use of the parameters with `con_view` 
+            for interpolation between the last and current integration 
+            steps (so-called dense output).
+        dense_components : sequence, optional
+            The components of solution for which dense output is desired 
+            (if None, no dense output will be provided to `solout`; 
+            see above).  There should be at least one element in the 
+            sequence, and no more than n (for an n-component system).  
+            These components may be listed in any order, except for the 
+            case when all n are are listed, in which case they must appear 
+            in order (i.e. 0,1,...,n-1).
         """
         if self._integrator.supports_solout:
-            self._integrator.set_solout(solout)
+            self._integrator.set_solout(solout, 
+                                        dense_components=dense_components)
         else:
-            raise ValueError("selected integrator does not support solout,"
-                            + " choose another one")
-
+            raise ValueError("selected integrator does not support solout," +
+                             " choose another one")
+        if self._y:  # initial conditions have already been set (erroneously).
+            # see: https://github.com/scipy/scipy/issues/4118
+            raise RuntimeError("use set_solout before setting "
+                               "initial conditions.")
+        return self
 
 def _transform_banded_jac(bjac):
     """
@@ -567,25 +603,48 @@ class complex_ode(ode):
         y = ode.integrate(self, t, step, relax)
         return y[::2] + 1j * y[1::2]
 
-    def set_solout(self, solout):
+    def set_solout(self, solout, dense_components=None):
         """
         Set callable to be called at every successful integration step.
+
+        Only available for the dopri5 and dop853 integrators.
 
         Parameters
         ----------
         solout : callable
-            ``solout(t, y)`` is called at each internal integrator step,
-            t is a scalar providing the current independent position
-            y is the current soloution ``y.shape == (n,)``
-            solout should return -1 to stop integration
-            otherwise it should return None or 0
-
+            The function `solout` is called at each internal integrator
+            step.  `solout` should return -1 to stop integration;
+            otherwise it should return None or 0.
+            The arguments that `solout` is provided with depend on the
+            keyword argument `dense_components`.  If `dense_components`
+            is None (the default) then ``solout(t, y)`` is called where
+            `t` is a scalar providing the current time and
+            `y` is the current solution i.e. ``y.shape == (n,)``.
+            If instead of None, the keyword argument `dense_components`
+            is a sequence then  
+            ``solout(nr , told, t , y, con_view, icomp)`` is called.  
+            The additional parameters passed to `solout` may be used for 
+            interpolation between the current (at `t`) and the last 
+            integration step (at `told`).  The helper function `dense_dop` 
+            in this module can make use of the parameters with `con_view` 
+            for interpolation between the last and current integration 
+            steps (so-called dense output).
+        dense_components : sequence, optional
+            The components of solution for which dense output is desired 
+            (if None, no dense output will be provided to `solout`; 
+            see above).  There should be at least one element in the 
+            sequence, and no more than n (for an n-component system).  
+            These components may be listed in any order, except for the 
+            case when all n are are listed, in which case they must appear 
+            in order (i.e. 0,1,...,n-1).
         """
         if self._integrator.supports_solout:
-            self._integrator.set_solout(solout, complex=True)
+            self._integrator.set_solout(solout, complex=True, 
+                                        dense_components=dense_components)
         else:
-            raise TypeError("selected integrator does not support solouta,"
-                            + "choose another one")
+            raise TypeError("selected integrator does not support solout," +
+                            "choose another one")
+        return self  # allows method "chaining".
 
 
 #------------------------------------------------------------------------------
@@ -952,6 +1011,7 @@ class dopri5(IntegratorBase):
     runner = getattr(_dop, 'dopri5', None)
     name = 'dopri5'
     supports_solout = True
+    n_interp_coeffs = 5  # number of coefficients for dense output.
 
     messages = {1: 'computation successful',
                 2: 'comput. successful (interrupted by solout)',
@@ -985,17 +1045,28 @@ class dopri5(IntegratorBase):
         self.verbosity = verbosity
         self.success = 1
         self.set_solout(None)
+        self.dense_components = None
 
-    def set_solout(self, solout, complex=False):
+    def set_solout(self, solout, complex=False, dense_components=None):
         self.solout = solout
         self.solout_cmplx = complex
+        self.dense_components = None
         if solout is None:
             self.iout = 0
         else:
-            self.iout = 1
+            if dense_components is None:
+                self.iout = 1
+            else:
+                self.iout = 2
+                self.dense_components = array(dense_components[:], int)
 
     def reset(self, n, has_jac):
-        work = zeros((8 * n + 21,), float)
+        if self.dense_components is None:
+            work = zeros((8 * n + 21,), float)
+            iwork = zeros((21,), int32)
+        else:
+            work, iwork = self._work_arrays_for_dense(n)
+
         work[1] = self.safety
         work[2] = self.dfactor
         work[3] = self.ifactor
@@ -1003,7 +1074,6 @@ class dopri5(IntegratorBase):
         work[5] = self.max_step
         work[6] = self.first_step
         self.work = work
-        iwork = zeros((21,), int32)
         iwork[0] = self.nsteps
         iwork[2] = self.verbosity
         self.iwork = iwork
@@ -1011,22 +1081,80 @@ class dopri5(IntegratorBase):
                           self.iout, self.work, self.iwork]
         self.success = 1
 
+    def _work_arrays_for_dense(self, n):
+        """Allocate work arrays for DOPRI5 and DOP853.
+        See Fortran code for requirements.
+        """
+        if self.solout_cmplx is True:
+            dense_scale = 2
+        else:
+            dense_scale = 1
+        n_dense_components = len(self.dense_components)
+        if self.name == 'dopri5':
+            work_storage_req = 8 * n + 21            
+            work_storage_req += 5 * dense_scale * n_dense_components
+        elif self.name == 'dop853':
+            work_storage_req = 11 * n + 21
+            work_storage_req += 8 * dense_scale * n_dense_components
+        else:
+            raise RuntimeError("Unknown self.name") 
+        work = zeros((work_storage_req), float)
+
+        if (n_dense_components < 1):
+            raise ValueError("Too few dense components")
+        if ((self.solout_cmplx is True) and 
+                (n_dense_components * dense_scale > n)):
+            raise ValueError("Too many dense components")
+        if (n_dense_components * dense_scale == n):
+            if False in [(i == self.dense_components[i]) 
+                           for i in range(n_dense_components)]:
+                raise ValueError("Full dense components must "
+                                 "be in order")
+        if True in [((component < 0) or (component > n/dense_scale - 1)) 
+                    for component in self.dense_components]:
+                raise ValueError("Dense component out of bounds")
+
+        iwork = zeros((21 + dense_scale * n_dense_components,), int32)
+        iwork[4] = n_dense_components * dense_scale
+        i_dense_start = 20
+        if self.solout_cmplx is True:
+            iwork[i_dense_start:-1:2] = self.dense_components[:]*2+1
+            iwork[(i_dense_start+1):-1:2] = self.dense_components[:]*2+2
+        else:
+            iwork[i_dense_start:-1:1] = self.dense_components[:]+1
+        return work, iwork
+
     def run(self, f, jac, y0, t0, t1, f_params, jac_params):
         x, y, iwork, idid = self.runner(*((f, t0, y0, t1) +
                                           tuple(self.call_args) + (f_params,)))
+        # keeping a reference to "iwork" is useful for examination after
+        # integration e.g. the number of function  evaluations 
+        # (iwork[16] corresponding to IWORK(17) of dopri5.f and dop853.f):
+        self.returned_iwork = iwork  
         if idid < 0:
             warnings.warn(self.name + ': ' +
                 self.messages.get(idid, 'Unexpected idid=%s' % idid))
             self.success = 0
         return y, x
 
-    def _solout(self, nr, xold, x, y, nd, icomp, con):
-        if self.solout is not None:
+    def _solout(self, nr, xold, x, y, con, icomp, nd):
+        if self.solout is None:
+            return 1
+        else:
             if self.solout_cmplx:
                 y = y[::2] + 1j * y[1::2]
-            return self.solout(x, y)
-        else:
-            return 1
+            if self.iout == 1:
+                return self.solout(x, y)
+            if self.iout == 2:
+                if self.solout_cmplx:
+                    cmplx_con = con[::2] + 1j * con[1::2]
+                    con_view = cmplx_con.view()
+                    con_view.shape = (self.n_interp_coeffs, nd/2)
+                else:
+                    con_view = con.view()
+                    con_view.shape = (self.n_interp_coeffs, nd)
+
+                return self.solout(nr, xold, x, y, con_view, icomp)
 
 if dopri5.runner is not None:
     IntegratorBase.integrator_classes.append(dopri5)
@@ -1036,6 +1164,7 @@ class dop853(dopri5):
 
     runner = getattr(_dop, 'dop853', None)
     name = 'dop853'
+    n_interp_coeffs = 8  # number of coefficients for dense output.
 
     def __init__(self,
                  rtol=1e-6, atol=1e-12,
@@ -1061,9 +1190,14 @@ class dop853(dopri5):
         self.verbosity = verbosity
         self.success = 1
         self.set_solout(None)
+        self.dense_components = None
 
     def reset(self, n, has_jac):
-        work = zeros((11 * n + 21,), float)
+        if self.dense_components is None:
+            work = zeros((11 * n + 21,), float)
+            iwork = zeros((21,), int32)
+        else:
+            work, iwork = self._work_arrays_for_dense(n)
         work[1] = self.safety
         work[2] = self.dfactor
         work[3] = self.ifactor
@@ -1071,7 +1205,6 @@ class dop853(dopri5):
         work[5] = self.max_step
         work[6] = self.first_step
         self.work = work
-        iwork = zeros((21,), int32)
         iwork[0] = self.nsteps
         iwork[2] = self.verbosity
         self.iwork = iwork
@@ -1216,3 +1349,56 @@ class lsoda(IntegratorBase):
 
 if lsoda.runner:
     IntegratorBase.integrator_classes.append(lsoda)
+
+def dense_dop(tdense, told, tnew, con_view):
+    """
+    Interpolate the output of ode and complex_ode.
+
+    Uses the interpolation polynomial information passed to the `solout` 
+    callback function (set using the `.set_solout()` method of
+    either `ode` or `complex_ode`) by the `dopri5` and `dop853` 
+    integrators.
+    
+    Parameters
+    ----------
+    tdense : float
+         time to determine interpolated solution.
+    told : float
+         previous integration step time.
+    tnew : float
+         new integration step time.
+    con_view : array_like
+         a 2-D array of floats containing the coefficients of 
+         interpolating polynomials provided to the `solout` callback 
+         function from the integrator.  If `con_view` has shape (5, *) 
+         then we assume it is from `dopri5`; if it has shape (8, *) 
+         then we assume it is from `dop853`, and use the appropriate 
+         interpolation function.  The size of the other dimension will 
+         be the number of requested dense components.
+
+    Returns
+    -------
+    dense_components : array_like
+        a 1-d array of floats containing components of the interpolated 
+        solution at `tdense`, in the order that the coefficients are given 
+        in `con_view`.  If `con_view` is provided by the `solout` callback 
+        function, the order of these components is the same as the 
+        ordering in the `dense_components` keyword argument of the call to 
+        `.set_solout`.
+    """
+    # emulate the interpolation functions CON_VIEWTD5 (in dopri5.f) and 
+    # CON_VIEWTD8 (in dop853.f)
+    theta = (tdense - told) / (tnew - told)
+    theta1 = 1.0 - theta
+    ncoeff = con_view.shape[0]
+    if ncoeff == 5:  # dopri5
+        theta_ordering = (theta1, theta)
+    elif ncoeff == 8:  # dop853
+        theta_ordering = (theta, theta1)
+    else:
+        raise RuntimeError("con_view shape does not make sense")
+    dense_outputs = con_view[ncoeff - 1][:]
+    for i in range(0, ncoeff - 1):
+        dense_outputs = (con_view[ncoeff - 2 - i][:] +
+                         theta_ordering[(i % 2)] * dense_outputs[:])
+    return dense_outputs

@@ -44,7 +44,7 @@ Integrators of ODE systems
    odeint        -- General integration of ordinary differential equations.
    ode           -- Integrate ODE using VODE and ZVODE routines.
    complex_ode   -- Convert a complex-valued ODE to real-valued and integrate.
-
+   dense_dop     -- Interpolate the output of `ode` and `complex_ode`.
 """
 from __future__ import division, print_function, absolute_import
 

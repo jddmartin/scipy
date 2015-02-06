@@ -13,7 +13,7 @@ from scipy._lib.six import xrange
 from numpy.testing import (
     assert_, TestCase, run_module_suite, assert_array_almost_equal,
     assert_raises, assert_allclose, assert_array_equal, assert_equal)
-from scipy.integrate import odeint, ode, complex_ode
+from scipy.integrate import odeint, ode, complex_ode, dense_dop
 
 #------------------------------------------------------------------------------
 # Test ODE integrators
@@ -212,6 +212,11 @@ class TestComplexOde(TestODEClass):
 
 
 class TestSolout(TestCase):
+
+    # Docstrings for .set_solout in both ode and complex_ode should be the same
+    def test_docstrings(self,):
+        assert_(ode.set_solout.__doc__ == complex_ode.set_solout.__doc__)
+    
     # Check integrate.ode correctly handles solout for dopri5 and dop853
     def _run_solout_test(self, integrator):
         # Check correct usage of solout
@@ -272,7 +277,137 @@ class TestSolout(TestCase):
         for integrator in ('dopri5', 'dop853'):
             self._run_solout_break_test(integrator)
 
+    def _run_dense_chaining_test(self, integrator):
+        # test ability to "chain" ode methods:
+        class SolOut(object):
+            def __init__(self):
+                self.solout_called = 0
 
+            def solout(self, *args):
+                self.solout_called += 1
+
+        def f(t, y):
+            return -y
+
+        aSolOut = SolOut()
+        atol = 1.0e-12
+        tend = 1.0
+        yf = ode(f).set_integrator(integrator, atol=atol, rtol=atol)\
+                   .set_solout(aSolOut.solout)\
+                   .set_initial_value(1.0).integrate(tend)
+        expected_answer = exp(-tend)
+        assert_(abs(yf[0] - expected_answer) < atol)
+        assert_(aSolOut.solout_called > 1)
+
+    def test_dense_chaining(self):
+        for integrator in ('dopri5', 'dop853'):
+            self._run_dense_chaining_test(integrator)
+
+    def _run_solout_initial_condition_ordering_test(self, integrator,
+                                                    correct_ordering):
+        # test related to: https://github.com/scipy/scipy/issues/4118
+        def f(t, y):  # Exponential decay.
+            return -y
+
+        def solout(t, y):
+            if y[0] < 0.5: 
+                return -1
+            return 0
+
+        y_initial = 1
+        t_initial = 0
+        r = ode(f).set_integrator(integrator)  # Integrator that supports solout
+        if correct_ordering:
+            r.set_solout(solout)
+            r.set_initial_value(y_initial, t_initial)
+        else:  # should raise an exception
+            r.set_initial_value(y_initial, t_initial)
+            r.set_solout(solout)
+        assert_(r.integrate(5)[0] > 0.4)  # make sure we stop before t=5
+
+    def test_solout_initial_condition_ordering(self):
+        for integrator in ('dopri5', 'dop853'):
+            assert_raises(RuntimeError, 
+                          self._run_solout_initial_condition_ordering_test, 
+                          integrator,
+                          False)
+            self._run_solout_initial_condition_ordering_test(integrator, True)
+
+    def _run_test_integrate_arenstorf_ode(self, integrator, tolerance):
+        # Check dense output for Arenstorf system.
+        # An introductory discussion is given on pages 129-131 of 
+        # Hairer et al.'s 
+        # "Solving Ordinary Differential Equations, Nonstiff Problems",
+        # Second Revised Edition, Springer, 1993.
+        # This code is modelled after "Driver for the code DORPI5" in 
+        # the Appendix of this book, available at: 
+        # http://www.unige.ch/~hairer/prog/nonstiff/dr_dopri5.f
+
+        class SoloutWrapper(object):
+            # dense solution points from output of Fortran code
+            pretabulated_solution = (
+                (2.00, -5.7987814108e-01, 6.0907752507e-01),
+                (4.00, -1.9833352699e-01, 1.1376380857e+00),
+                (6.00, -4.7357439430e-01, 2.2390681178e-01),
+                (8.00, -1.1745533505e+00, -2.7594669824e-01),
+                (10.00, -8.3980734662e-01, 4.4683022680e-01),
+                (12.00, 1.3147124683e-02, -8.3857514994e-01),
+                (14.00, -6.0311295041e-01, -9.9125980314e-01),
+                (16.00, 2.4271109988e-01, -3.8999488331e-01),
+            )
+
+            def __init__(self, tolerance):
+                self.tolerance = tolerance
+
+            def solout(self, nr, told, t, v, con_view, icomp):
+                if nr == 1:  # initial conditions:
+                    return 0
+                # check to see if we can compare any of our pretabulated
+                # solution within the interval told to t:
+                for tab_t, a, b in self.pretabulated_solution:
+                    if ((told <= tab_t) and (tab_t <= t)):
+                        dense = dense_dop(tab_t, told, t, con_view)
+                        assert_(abs(a-dense[0]) < tolerance)
+                        assert_(abs(b-dense[1]) < tolerance)
+
+        def f_arenstorf(x, y, rpar):
+            """The Arenstorf system of differential equations.
+            """
+            amu, amup = rpar
+            r1 = (y[0]+amu)**2+y[1]**2
+            r1 = r1*sqrt(r1)
+            r2 = (y[0]-amup)**2+y[1]**2
+            r2 = r2*sqrt(r2)
+            f2 = y[0]+2*y[3]-amup*(y[0]+amu)/r1-amu*(y[0]-amup)/r2
+            f3 = y[1]-2*y[2]-amup*y[1]/r1-amu*y[1]/r2
+            return [y[2], y[3], f2, f3]
+
+        # parameters for differential equation system:
+        rpar = zeros((2,), float)
+        rpar[0] = 0.012277471
+        rpar[1] = 1.0-rpar[0]
+
+        # initial conditions, and length of time to integrate:
+        x0 = 0.0
+        y0 = [0.994, 0.0, 0.0, -2.00158510637908252240537862224]
+        xend = 17.0652165601579625588917206249
+
+        # desired tolerances:
+        itol = 0
+        rtol = 1.0e-7
+        atol = rtol
+        ig = ode(f_arenstorf).set_integrator('dopri5', atol=atol, rtol=rtol)
+        aSoloutWrapper = SoloutWrapper(tolerance)
+        ig.set_solout(aSoloutWrapper.solout, dense_components=(0, 1,))
+        ig.set_initial_value(y0, x0).set_f_params(rpar)
+        ret = ig.integrate(xend)
+
+    def test_integrate_arenstorf_ode(self):
+        # The tolerances chosen are just below threshold of failure:
+        for (integrator, tolerance) in (('dopri5', 1e-10),
+                                        ('dop853', 1e-10)):
+            self._run_test_integrate_arenstorf_ode(integrator, tolerance)
+            
 class TestComplexSolout(TestCase):
     # Check integrate.ode correctly handles solout for dopri5 and dop853
     def _run_solout_test(self, integrator):
@@ -333,6 +468,78 @@ class TestComplexSolout(TestCase):
     def test_solout_break(self):
         for integrator in ('dopri5', 'dop853'):
             self._run_solout_break_test(integrator)
+
+    def _run_solout_dense_output_ordering_test(self, integrator, 
+                                               dense_components):
+        # various specification of `dense_components` will test 
+        # dense output correctness and error handling.
+        def odeRHS(t, y):  # very simple system with exact solution
+            return [1.0j*ay for ay in y]
+
+        class ExactDenseSolution(object):
+            def __init__(self, initial_conditions, dense_components):
+                self.initial_conditions = initial_conditions
+                self.dense_components = dense_components
+            
+            def solution(self, t):
+                all_components_exact = [initial_y*exp(1.0j*t) 
+                                        for initial_y in 
+                                        self.initial_conditions]
+                return [all_components_exact[i] for i in dense_components]
+
+        # just below threshold of failure:
+        atol = 1.0e-15
+        safety_factor = 10.0
+        
+        class SoloutWrapper(object):
+            def __init__(self, initial_condition, aExactDenseSolution):
+                self.initial_condition = initial_condition
+                self.aExactDenseSolution = aExactDenseSolution
+
+            def solout(self, nr, told, t, v, con_view, icomp):
+                if nr > 1:
+                    for tdense in np.linspace(told, t, 10):
+                        y_interp = dense_dop(tdense, told, t, con_view)
+                        y_exact = self.aExactDenseSolution.solution(tdense)
+                        diff = [ay_interp-ay_exact for (ay_interp, ay_exact) 
+                                in zip(y_interp, y_exact)]
+                        for adiff in diff:
+                            assert_(abs(adiff.real) < atol*safety_factor)
+                            assert_(abs(adiff.imag) < atol*safety_factor)
+
+        initial_condition = [1.0, 1.0j, -1.0]  
+        aExactDenseSolution = ExactDenseSolution(initial_condition, 
+                                                 dense_components)
+        aSoloutWrapper = SoloutWrapper(initial_condition, aExactDenseSolution)
+        ig = complex_ode(odeRHS).set_integrator(integrator, atol=atol,
+                                                rtol=atol, nsteps=10000)
+        ig.set_solout(aSoloutWrapper.solout, dense_components=dense_components)
+        ig.set_initial_value(initial_condition, 0.0)
+        ig.integrate(pi)
+        
+    def test_dense_interpolation(self):
+        # check that various ways of specifying the dense components
+        # required are handled correctly:
+        for integrator in ('dopri5', 'dop853'):
+            for dense_components in ((0,), (1,), (2,), (0, 1,), (0, 2,), 
+                                     (1, 2), (1, 0,), (2, 1,), (0, 1, 2)):
+                self._run_solout_dense_output_ordering_test(integrator,
+                                                            dense_components)
+
+            dense_components = (1, 2, 3,)  # index out of range
+            assert_raises(ValueError, 
+                          self._run_solout_dense_output_ordering_test, 
+                          integrator, dense_components)
+
+            dense_components = (0, -1,)  # index out of range
+            assert_raises(ValueError, 
+                          self._run_solout_dense_output_ordering_test, 
+                          integrator, dense_components)
+
+            dense_components = (2, 1, 0,)  # wrong ordering for all components
+            assert_raises(ValueError, 
+                          self._run_solout_dense_output_ordering_test, 
+                          integrator, dense_components)
 
 
 #------------------------------------------------------------------------------

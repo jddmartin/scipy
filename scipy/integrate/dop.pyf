@@ -12,7 +12,7 @@ python module __user__routines
          double precision intent(hide) :: rpar
          integer intent(hide) :: ipar
        end subroutine fcn
-       subroutine solout(nr,xold,x,y,n,con,icomp,nd,rpar,ipar,irtn)
+       subroutine solout5(nr,xold,x,y,n,con,icomp,nd,rpar,ipar,irtn)
          integer intent(in) :: nr
          integer intent(hide) :: n
          double precision intent(in) :: xold, x
@@ -23,16 +23,28 @@ python module __user__routines
          double precision intent(hide) :: rpar
          integer intent(hide) :: ipar
          integer intent(out) :: irtn
-       end subroutine solout
+       end subroutine solout5
+       subroutine solout8(nr,xold,x,y,n,con,icomp,nd,rpar,ipar,irtn)
+         integer intent(in) :: nr
+         integer intent(hide) :: n
+         double precision intent(in) :: xold, x
+         double precision dimension(n),intent(c,in) :: y
+         integer intent(in) :: nd
+         integer dimension(nd), intent(in) :: icomp
+         double precision dimension(8*nd), intent(in) :: con
+         double precision intent(hide) :: rpar
+         integer intent(hide) :: ipar
+         integer intent(out) :: irtn
+       end subroutine solout8
     end interface
 end python module __user__routines
 
 python module _dop
     interface
-       subroutine dopri5(n,fcn,x,y,xend,rtol,atol,itol,solout,iout,work,lwork,iwork,liwork,rpar,ipar,idid)
+       subroutine dopri5(n,fcn,x,y,xend,rtol,atol,itol,solout5,iout,work,lwork,iwork,liwork,rpar,ipar,idid)
          use __user__routines
          external fcn
-         external solout
+         external solout5
          integer intent(hide),depend(y) :: n = len(y)
          double precision dimension(n),intent(in,out,copy) :: y
          double precision intent(in,out):: x
@@ -52,10 +64,10 @@ python module _dop
          double precision intent(hide) :: rpar = 0.0
          integer intent(hide) :: ipar = 0
        end subroutine dopri5
-       subroutine dop853(n,fcn,x,y,xend,rtol,atol,itol,solout,iout,work,lwork,iwork,liwork,rpar,ipar,idid)
+       subroutine dop853(n,fcn,x,y,xend,rtol,atol,itol,solout8,iout,work,lwork,iwork,liwork,rpar,ipar,idid)
          use __user__routines
          external fcn
-         external solout
+         external solout8
          integer intent(hide),depend(y) :: n = len(y)
          double precision dimension(n),intent(in,out,copy) :: y
          double precision intent(in,out):: x
