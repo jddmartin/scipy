@@ -1386,8 +1386,8 @@ def dense_dop(tdense, told, tnew, con_view):
         ordering in the `dense_components` keyword argument of the call to 
         `.set_solout`.
     """
-    # emulate the interpolation functions CON_VIEWTD5 (in dopri5.f) and 
-    # CON_VIEWTD8 (in dop853.f)
+    # emulate the interpolation functions CONTD5 (in dopri5.f) and 
+    # CONTD8 (in dop853.f)
     theta = (tdense - told) / (tnew - told)
     theta1 = 1.0 - theta
     ncoeff = con_view.shape[0]
