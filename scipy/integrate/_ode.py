@@ -88,7 +88,8 @@ __docformat__ = "restructuredtext en"
 import re
 import warnings
 
-from numpy import asarray, array, zeros, int32, isscalar, real, imag, vstack
+from numpy import asarray, array, zeros, int32, isscalar, real, imag, vstack,\
+    resize, copy
 
 from . import vode as _vode
 from . import _dop
@@ -445,11 +446,11 @@ class ode(object):
             `y` is the current solution i.e. ``y.shape == (n,)``.
             If instead of None, the keyword argument `dense_components`
             is a sequence then  
-            ``solout(nr , told, t , y, con_view, icomp)`` is called.  
+            ``solout(nr , told, t , y, con, icomp)`` is called.  
             The additional parameters passed to `solout` may be used for 
             interpolation between the current (at `t`) and the last 
             integration step (at `told`).  The helper function `dense_dop` 
-            in this module can make use of the parameters with `con_view` 
+            in this module can make use of the parameters with `con` 
             for interpolation between the last and current integration 
             steps (so-called dense output).
         dense_components : sequence, optional
@@ -622,11 +623,11 @@ class complex_ode(ode):
             `y` is the current solution i.e. ``y.shape == (n,)``.
             If instead of None, the keyword argument `dense_components`
             is a sequence then  
-            ``solout(nr , told, t , y, con_view, icomp)`` is called.  
+            ``solout(nr , told, t , y, con, icomp)`` is called.  
             The additional parameters passed to `solout` may be used for 
             interpolation between the current (at `t`) and the last 
             integration step (at `told`).  The helper function `dense_dop` 
-            in this module can make use of the parameters with `con_view` 
+            in this module can make use of the parameters with `con` 
             for interpolation between the last and current integration 
             steps (so-called dense output).
         dense_components : sequence, optional
@@ -1137,24 +1138,24 @@ class dopri5(IntegratorBase):
             self.success = 0
         return y, x
 
-    def _solout(self, nr, xold, x, y, con, icomp, nd):
+    def _solout(self, nr, xold, x, orig_y, orig_con, icomp, nd):
         if self.solout is None:
             return 1
         else:
             if self.solout_cmplx:
-                y = y[::2] + 1j * y[1::2]
+                y = array(orig_y[::2] + 1j * orig_y[1::2])
+            else:
+                y = copy(orig_y)
             if self.iout == 1:
                 return self.solout(x, y)
             if self.iout == 2:
                 if self.solout_cmplx:
-                    cmplx_con = con[::2] + 1j * con[1::2]
-                    con_view = cmplx_con.view()
-                    con_view.shape = (self.n_interp_coeffs, nd/2)
+                    cmplx_con = orig_con[::2] + 1j * orig_con[1::2]
+                    con = resize(cmplx_con, (self.n_interp_coeffs, nd/2))
                 else:
-                    con_view = con.view()
-                    con_view.shape = (self.n_interp_coeffs, nd)
+                    con = resize(orig_con,(self.n_interp_coeffs, nd))
 
-                return self.solout(nr, xold, x, y, con_view, icomp)
+                return self.solout(nr, xold, x, y, con, icomp)
 
 if dopri5.runner is not None:
     IntegratorBase.integrator_classes.append(dopri5)
@@ -1350,7 +1351,7 @@ class lsoda(IntegratorBase):
 if lsoda.runner:
     IntegratorBase.integrator_classes.append(lsoda)
 
-def dense_dop(tdense, told, tnew, con_view):
+def dense_dop(tdense, told, tnew, con):
     """
     Interpolate the output of ode and complex_ode.
 
@@ -1367,10 +1368,10 @@ def dense_dop(tdense, told, tnew, con_view):
          previous integration step time.
     tnew : float
          new integration step time.
-    con_view : array_like
+    con : array_like
          a 2-D array of floats containing the coefficients of 
          interpolating polynomials provided to the `solout` callback 
-         function from the integrator.  If `con_view` has shape (5, *) 
+         function from the integrator.  If `con` has shape (5, *) 
          then we assume it is from `dopri5`; if it has shape (8, *) 
          then we assume it is from `dop853`, and use the appropriate 
          interpolation function.  The size of the other dimension will 
@@ -1381,7 +1382,7 @@ def dense_dop(tdense, told, tnew, con_view):
     dense_components : array_like
         a 1-d array of floats containing components of the interpolated 
         solution at `tdense`, in the order that the coefficients are given 
-        in `con_view`.  If `con_view` is provided by the `solout` callback 
+        in `con`.  If `con` is provided by the `solout` callback 
         function, the order of these components is the same as the 
         ordering in the `dense_components` keyword argument of the call to 
         `.set_solout`.
@@ -1390,15 +1391,15 @@ def dense_dop(tdense, told, tnew, con_view):
     # CONTD8 (in dop853.f)
     theta = (tdense - told) / (tnew - told)
     theta1 = 1.0 - theta
-    ncoeff = con_view.shape[0]
+    ncoeff = con.shape[0]
     if ncoeff == 5:  # dopri5
         theta_ordering = (theta1, theta)
     elif ncoeff == 8:  # dop853
         theta_ordering = (theta, theta1)
     else:
-        raise RuntimeError("con_view shape does not make sense")
-    dense_outputs = con_view[ncoeff - 1][:]
+        raise RuntimeError("con shape does not make sense")
+    dense_outputs = con[ncoeff - 1][:]
     for i in range(0, ncoeff - 1):
-        dense_outputs = (con_view[ncoeff - 2 - i][:] +
+        dense_outputs = (con[ncoeff - 2 - i][:] +
                          theta_ordering[(i % 2)] * dense_outputs[:])
     return dense_outputs
