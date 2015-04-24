@@ -359,7 +359,7 @@ class TestSolout(TestCase):
             def __init__(self, tolerance):
                 self.tolerance = tolerance
 
-            def solout(self, nr, told, t, v, con_view, icomp):
+            def solout(self, nr, told, t, v, con_view):
                 if nr == 1:  # initial conditions:
                     return 0
                 # check to see if we can compare any of our pretabulated
@@ -496,7 +496,7 @@ class TestComplexSolout(TestCase):
                 self.initial_condition = initial_condition
                 self.aExactDenseSolution = aExactDenseSolution
 
-            def solout(self, nr, told, t, v, con_view, icomp):
+            def solout(self, nr, told, t, v, con_view):
                 if nr > 1:
                     for tdense in np.linspace(told, t, 10):
                         y_interp = dense_dop(tdense, told, t, con_view)

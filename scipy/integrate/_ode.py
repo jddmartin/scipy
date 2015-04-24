@@ -446,7 +446,7 @@ class ode(object):
             `y` is the current solution i.e. ``y.shape == (n,)``.
             If instead of None, the keyword argument `dense_components`
             is a sequence then  
-            ``solout(nr , told, t , y, con, icomp)`` is called.  
+            ``solout(nr , told, t , y, con)`` is called.  
             The additional parameters passed to `solout` may be used for 
             interpolation between the current (at `t`) and the last 
             integration step (at `told`).  The helper function `dense_dop` 
@@ -623,7 +623,7 @@ class complex_ode(ode):
             `y` is the current solution i.e. ``y.shape == (n,)``.
             If instead of None, the keyword argument `dense_components`
             is a sequence then  
-            ``solout(nr , told, t , y, con, icomp)`` is called.  
+            ``solout(nr , told, t , y, con)`` is called.  
             The additional parameters passed to `solout` may be used for 
             interpolation between the current (at `t`) and the last 
             integration step (at `told`).  The helper function `dense_dop` 
@@ -1155,7 +1155,7 @@ class dopri5(IntegratorBase):
                 else:
                     con = resize(orig_con,(self.n_interp_coeffs, nd))
 
-                return self.solout(nr, xold, x, y, con, icomp)
+                return self.solout(nr, xold, x, y, con)
 
 if dopri5.runner is not None:
     IntegratorBase.integrator_classes.append(dopri5)
